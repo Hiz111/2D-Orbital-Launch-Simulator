@@ -1,98 +1,62 @@
-# 2D-Orbital-Launch-Simulator
-2D, customisable, multi-stage rocket ascent and orbital insertion simulator in C (Visual Studios). A physics-based 2D launch vehicle simulator written in C that models multi-stage rocket ascent, atmospheric drag, inverse-square law of gravitation, variable mass depletion, Earth curvature, and orbital insertion.
+# 2D Multi-Stage Rocket & Orbital Launch Simulator
+
+A physics-based 2D launch vehicle simulator written in C++ that models multi-stage rocket ascent, US Standard Atmosphere aerodynamics, variable mass depletion, curved-Earth orbital mechanics, and zero-dependency vector trajectory plotting.
+
+![Saturn V Orbital Trajectory](Example/Saturn_V_trajectory.svg)
 
 ---
 
-## Features
+## Key Features
 
-* **Curved-Earth 2D Orbital Mechanics:** Tracks vehicle position in Earth-centered Cartesian coordinates (`X Pos`, `Y Pos`) alongside downrange angular displacement (`Earth Arc`).
-* **Local-Horizon Pitch Guidance:** Automatically rotates user-defined pitch angles relative to the local horizon as the vehicle travels downrange.
-* **Multi-Stage Vehicle Modeling:** Configurable dry mass, propellant mass, burn time, thrust, drag coefficient ($C_d$), and cross-sectional area per stage.
-* **Programmable Flight Computer:** Execute sequential, timed guidance commands (duration, throttle, pitch angle, and stage decoupling) for each stage.
-* **1-Second Telemetry Logging:** Exports full flight telemetry (`fl_data_*.txt`) with stage and command completion markers for post-flight analysis and plotting.
+* **Curved-Earth 2D Orbital Mechanics:** Integrates vehicle motion in Earth-centered Cartesian coordinates (`X Pos`, `Y Pos`) alongside downrange angular displacement (`Earth Arc`).
+* **Local-Horizon Pitch Guidance:** Continuously transforms user-defined pitch commands relative to the local horizon as the rocket pitches over downrange.
+* **Multi-Layer Atmosphere & Mach Drag:** Models temperature, pressure, and air density across tropospheric and stratospheric layers up to `85 km`, scaling drag coefficients across subsonic, transonic, supersonic, and hypersonic regimes.
+* **Analytical Orbit Determination:** Evaluates specific orbital energy ($\varepsilon$), specific angular momentum ($h$), apoapsis, periapsis, eccentricity ($e$), and orbital period to verify stable Low Earth Orbit (`periapsis > 85 km`) or escape trajectories.
+* **Interactive Flight Computer with `UNDO`:** Supports step-by-step input rollback during stage and command configuration, enforcing burn-time and timestep divisibility constraints.
+* **Built-In SVG Trajectory Plotter:** Automatically exports a standalone `trajectory.svg` showing Earth's surface, the `85 km` atmospheric boundary, downsampled telemetry markers, and stage separation events (`X`).
 
 ---
 
-## Physics & Guidance Model
+## Physics & Numerical Model
 
-* **Initial State:** Launches from Earth's surface at $(X, Y) = (0.0\text{ m},\ 6,378,000.0\text{ m})$ with $0.0\text{ m/s}$ initial velocity.
-* **Thrust Vectoring:** Pitch commands (`angle` in degrees, where `90°` is radially outward and `0°` is tangent to the local horizon) are transformed into global coordinates using the vehicle's downrange Earth arc (`arc`):
+* **Initial State:** Launches from Earth's surface at $(X, Y) = (0.0\text{ m},\ 6,378,000.0\text{ m})$ with zero initial velocity.
+* **Thrust Vectoring:** Pitch commands (`angle` in degrees, where `90°` is radially outward and `0°` is tangent to the local horizon) are rotated into global Cartesian coordinates using the vehicle's downrange Earth arc (`arc`):
   ```cpp
   double thr_dir_x = cos(radian - arc);
   double thr_dir_y = sin(radian - arc);
   ```
-* **Aerodynamics & Mass Flow:** Computes atmospheric density as a function of altitude and applies aerodynamic drag ($F_d = \frac{1}{2}\rho v^2 C_d A$) while updating vehicle mass every timestep based on throttle setting.
+* **Orbital Coast Visualization:** Once orbital insertion criteria are met, the integrator continues coasting for one full orbital period so the entire closed orbit is logged and plotted.
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-* A C/C++ compiler (`g++`, `clang++`, or MSVC)
+* A C++ compiler: **MSVC (Visual Studio)** on Windows (uses `fopen_s` / `scanf_s`), or `g++` / `clang++` with `-D_CRT_SECURE_NO_WARNINGS` / standard C I/O.
 
 ### Build & Run
 ```bash
-git clone https://github.com/Hiz111/2D-Orbital-Launch-Simulator.git
-gcc -O2 main.c -o rocket_sim -lm
-./rocket_sim
+git clone [https://github.com/Hiz111/2D-Orbital-Launch-Simulator.git](https://github.com/Hiz111/2D-Orbital-Launch-Simulator.git)
+cd 2D-Orbital-Launch-Simulator
+cl /O2 /EHsc 2D-launch-sim.cpp /Fe:rocket_sim.exe
+rocket_sim.exe
 ```
 
 ---
 
-## Configuration & Flight Commands
+## Featured Example: Saturn V / Apollo 11
 
-### 1. Vehicle Stage Parameters
-Define each stage using the following parameters:
+A complete 3-stage **Saturn V** launch and Low Earth Orbit insertion profile is available in the [`Example/`](Example/) directory:
 
-| Parameter | Description | Units |
-| :--- | :--- | :---: |
-| `m_dry` | Structural dry mass (plus upper payload) | $\text{kg}$ |
-| `m_fuel` | Usable propellant mass | $\text{kg}$ |
-| `t_burn` | Rated full-throttle burn duration | $\text{s}$ |
-| `thr` | Maximum engine thrust | $\text{N}$ |
-| `C_d` | Aerodynamic drag coefficient | — |
-| `crs_sct` | Reference cross-sectional area | $\text{m}^2$ |
-
-### 2. Guidance Command Format
-Each stage executes a list of sequential commands:
-* **Duration (`s`):** Length of the command step.
-* **Throttle (`0.0–1.0`):** Fraction of maximum thrust and fuel flow rate.
-* **Angle (`deg`):** Target pitch angle relative to the local horizon (`90°` = vertical, `0°` = horizontal).
-* **Decouple / Finish (`Y/N`):** Jettisons the current stage and ignites the next stage upon command completion.
-
----
-
-## Example Preset: Saturn V to Low Earth Orbit (LEO)
-
-### Vehicle Configuration
-| Parameter | Stage 1 (S-IC) | Stage 2 (S-II + Interstage) | Stage 3 (S-IVB + IU + Apollo) |
-| :--- | :---: | :---: | :---: |
-| **`m_dry`** | `131000` kg | `40100` kg | `59000` kg |
-| **`m_fuel`** | `2150000` kg | `444000` kg | `107000` kg |
-| **`t_burn`** | `162` s | `360` s | `445` s |
-| **`thr`** | `34500000` N | `5115000` N | `1023000` N |
-| **`C_d`** | `0.35` | `0.30` | `0.25` |
-| **`crs_sct`** | `80.1` $\text{m}^2$ | `80.1` $\text{m}^2$ | `34.2` $\text{m}^2$ |
-
-### Orbital Flight Plan
-| Stage | Cmd | Duration (s) | Throttle | Angle (deg) | Decouple (`Y/N`) |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Stage 1** | 1 | `15` | `1.0` | `90` | `N` |
-| **Stage 1** | 2 | `35` | `1.0` | `78` | `N` |
-| **Stage 1** | 3 | `50` | `1.0` | `62` | `N` |
-| **Stage 1** | 4 | `35` | `1.0` | `48` | `N` |
-| **Stage 1** | 5 | `33` | `0.8` | `38` | `Y` |
-| **Stage 2** | 1 | `120` | `1.0` | `34` | `N` |
-| **Stage 2** | 2 | `120` | `1.0` | `24` | `N` |
-| **Stage 2** | 3 | `120` | `0.9` | `14` | `Y` |
-| **Stage 3** | 1 | `150` | `1.0` | `6` | `N` |
-| **Stage 3** | 2 | `135` | `1.0` | `2` | `Y` |
+* **Full Setup & Flight Plan:** [`Example/README.md`](Example/README.md)
+* **Trajectory Plot:** [`Example/Saturn_V_trajectory.svg`](Example/Saturn_V_trajectory.svg)
+* **Telemetry Log:** [`Example/Saturn_V_fl_data.txt`](Example/Saturn_V_fl_data.txt)
 
 ---
 
 ## Telemetry Output
 
-Each simulation run outputs a tab-separated file (`fl_data_*.txt`) containing:
+Each simulation run generates a tab-separated `fl_data.txt` log and `trajectory.svg` graphic:
 
 | Column | Description |
 | :--- | :--- |
@@ -101,20 +65,11 @@ Each simulation run outputs a tab-separated file (`fl_data_*.txt`) containing:
 | `Altitude (m)` | Height above Earth's surface ($R_\oplus = 6,378,000\text{ m}$) |
 | `Mass (kg)` | Current total vehicle mass |
 | `Air Density (kgm-3)` | Local atmospheric density |
-| `X Pos` / `Y Pos` | Earth-centered 2D coordinates ($\text{m}$) |
+| `X Pos` / `Y Pos` | Earth-centered 2D Cartesian coordinates ($\text{m}$) |
 | `Earth Arc (rad)` | Downrange angular distance traveled around Earth |
-
----
-
-## Future Improvements
-
-* Automated gravity-turn and closed-loop orbital guidance (e.g., PEG / Q-guidance)
-* Multi-burn mission profiles (parking orbit coast + Trans-Lunar Injection)
-* Support for rotating Earth surface velocity boost at launch
-* Built-in Python visualization script for trajectory and orbital element analysis
 
 ---
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
