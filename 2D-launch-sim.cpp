@@ -35,72 +35,14 @@ struct base sim;
 vector<stage> stages;
 vector<vector<command>> cmds;
 struct highlights hl;
-
-bool is_keyword(const char* buf, const char* kw) {
-	size_t n = strlen(kw);
-	if (strlen(buf) != n) return false;
-	for (size_t i = 0; i < n; i++) {
-		if (toupper((unsigned char)buf[i]) != toupper((unsigned char)kw[i])) return false;
-	}
-	return true;
-}
-
-bool parse_double(const char* buf, double* out) {
-	char* endptr = NULL;
-	*out = strtod(buf, &endptr);
-	return (endptr != buf && *endptr == '\0' && isfinite(*out));
-}
-
-bool parse_int(const char* buf, int* out) {
-	char* endptr = NULL;
-	long val = strtol(buf, &endptr, 10);
-	if (endptr == buf || *endptr != '\0') return false;
-	*out = (int)val;
-	return true;
-}
-
-void evaluate_orbit(double x, double y, double vx, double vy, struct highlights* fnl) {
-	const double mu = g0 * R_E * R_E;
-	double r = sqrt(x * x + y * y);
-	double v2 = vx * vx + vy * vy;
-	double eps = 0.5 * v2 - mu / r;
-	double h = fabs(x * vy - y * vx);
-
-	fnl->in_orbit = false;
-	fnl->escaped = false;
-	fnl->apoapsis = 0.0;
-	fnl->periapsis = 0.0;
-	fnl->eccentricity = 0.0;
-	fnl->orbital_period = 0.0;
-
-	if (eps >= 0.0) {
-		double v_rad = (r > 0.0) ? ((x * vx + y * vy) / r) : 0.0;
-		if ((r - R_E) > ATMO_LIMIT && v_rad > 0.0) {
-			fnl->escaped = true;
-		}
-		return;
-	}
-
-	double a = -mu / (2.0 * eps);
-	double disc = 1.0 + (2.0 * eps * h * h) / (mu * mu);
-	double e = (disc > 0.0) ? sqrt(disc) : 0.0;
-
-	double r_p = a * (1.0 - e);
-	double r_a = a * (1.0 + e);
-
-	fnl->periapsis = r_p - R_E;
-	fnl->apoapsis = r_a - R_E;
-	fnl->eccentricity = e;
-	fnl->orbital_period = 2.0 * PI * sqrt((a * a * a) / mu);
-
-	if (fnl->periapsis > ATMO_LIMIT) {
-		fnl->in_orbit = true;
-	}
-}
-
+bool is_keyword(const char* buf, const char* kw);
+bool parse_double(const char* buf, double* out);
+bool parse_int(const char* buf, int* out);
+void evaluate_orbit(double x, double y, double vx, double vy, struct highlights* fnl);
 int init_input();
 int cmd_input(const vector<stage>& stg);
 int calculations(struct base sim, const vector<stage>& stg, const vector<vector<command>>& cmd, FILE* result, struct highlights* fnl);
+void generate_trajectory_svg(const char* telemetry_file, const char* svg_file);
 
 int main() {
 	FILE* datasheet = NULL;
@@ -164,7 +106,70 @@ int main() {
 	}
 
 	fclose(datasheet);
+	generate_trajectory_svg("fl_data.txt", "trajectory.svg");
 	return 0;
+}
+
+bool is_keyword(const char* buf, const char* kw) {
+	size_t n = strlen(kw);
+	if (strlen(buf) != n) return false;
+	for (size_t i = 0; i < n; i++) {
+		if (toupper((unsigned char)buf[i]) != toupper((unsigned char)kw[i])) return false;
+	}
+	return true;
+}
+
+bool parse_double(const char* buf, double* out) {
+	char* endptr = NULL;
+	*out = strtod(buf, &endptr);
+	return (endptr != buf && *endptr == '\0' && isfinite(*out));
+}
+
+bool parse_int(const char* buf, int* out) {
+	char* endptr = NULL;
+	long val = strtol(buf, &endptr, 10);
+	if (endptr == buf || *endptr != '\0') return false;
+	*out = (int)val;
+	return true;
+}
+
+void evaluate_orbit(double x, double y, double vx, double vy, struct highlights* fnl) {
+	const double mu = g0 * R_E * R_E;
+	double r = sqrt(x * x + y * y);
+	double v2 = vx * vx + vy * vy;
+	double eps = 0.5 * v2 - mu / r;
+	double h = fabs(x * vy - y * vx);
+
+	fnl->in_orbit = false;
+	fnl->escaped = false;
+	fnl->apoapsis = 0.0;
+	fnl->periapsis = 0.0;
+	fnl->eccentricity = 0.0;
+	fnl->orbital_period = 0.0;
+
+	if (eps >= 0.0) {
+		double v_rad = (r > 0.0) ? ((x * vx + y * vy) / r) : 0.0;
+		if ((r - R_E) > ATMO_LIMIT && v_rad > 0.0) {
+			fnl->escaped = true;
+		}
+		return;
+	}
+
+	double a = -mu / (2.0 * eps);
+	double disc = 1.0 + (2.0 * eps * h * h) / (mu * mu);
+	double e = (disc > 0.0) ? sqrt(disc) : 0.0;
+
+	double r_p = a * (1.0 - e);
+	double r_a = a * (1.0 + e);
+
+	fnl->periapsis = r_p - R_E;
+	fnl->apoapsis = r_a - R_E;
+	fnl->eccentricity = e;
+	fnl->orbital_period = 2.0 * PI * sqrt((a * a * a) / mu);
+
+	if (fnl->periapsis > ATMO_LIMIT) {
+		fnl->in_orbit = true;
+	}
 }
 
 int init_input() {
@@ -642,18 +647,20 @@ int calculations(struct base sim, const vector<stage>& stg, const vector<vector<
 	}
 
 	// Evaluate orbital status at the end of all scheduled commands
+	bool orbit_announced = false;
+	double orbit_coast_end = -1.0;
+
 	if (!grounded) {
 		evaluate_orbit(x, y, v_x, v_y, fnl);
 		if (fnl->in_orbit) {
+			orbit_announced = true;
 			fnl->t_fl = time;
+			orbit_coast_end = time + fnl->orbital_period;
 			if (fnl->apoapsis > fnl->m_alt) fnl->m_alt = fnl->apoapsis;
 			fprintf(result, "ORBIT ACHIEVED! Periapsis: %.2lf m | Apoapsis: %.2lf m | Eccentricity: %.5lf | Period: %.2lf s\n",
 				fnl->periapsis, fnl->apoapsis, fnl->eccentricity, fnl->orbital_period);
-			delete[] rem_fuel;
-			delete[] decoupled;
-			return 0;
 		}
-		if (fnl->escaped) {
+		else if (fnl->escaped) {
 			fnl->t_fl = time;
 			fprintf(result, "ESCAPE TRAJECTORY ACHIEVED!\n");
 			delete[] rem_fuel;
@@ -662,7 +669,7 @@ int calculations(struct base sim, const vector<stage>& stg, const vector<vector<
 		}
 	}
 
-	// Unpowered glide/coast phase until touchdown (H < 0) or orbital/escape exit
+	// Unpowered glide/coast phase until touchdown (H < 0) or one full orbital revolution
 	int aero_stage = sim.stage_count - 1;
 	for (int k = sim.stage_count - 1; k >= 0; k--) {
 		if (!decoupled[k]) {
@@ -761,17 +768,23 @@ int calculations(struct base sim, const vector<stage>& stg, const vector<vector<
 			fprintf(result, "%10.2lf\t%20.1lf\t%20.1lf\t%20.1lf\t%20.3lf\t%15.1lf\t%15.1lf\t%15.1lf\n",
 				time, v, H, m_tot, rho, x, y, arc);
 
-			evaluate_orbit(x, y, v_x, v_y, fnl);
-			if (fnl->in_orbit) {
-				fnl->t_fl = time;
-				if (fnl->apoapsis > fnl->m_alt) fnl->m_alt = fnl->apoapsis;
-				fprintf(result, "ORBIT ACHIEVED! Periapsis: %.2lf m | Apoapsis: %.2lf m | Eccentricity: %.5lf | Period: %.2lf s\n",
-					fnl->periapsis, fnl->apoapsis, fnl->eccentricity, fnl->orbital_period);
-				break;
+			if (!orbit_announced) {
+				evaluate_orbit(x, y, v_x, v_y, fnl);
+				if (fnl->in_orbit) {
+					orbit_announced = true;
+					fnl->t_fl = time;
+					orbit_coast_end = time + fnl->orbital_period;
+					if (fnl->apoapsis > fnl->m_alt) fnl->m_alt = fnl->apoapsis;
+					fprintf(result, "ORBIT ACHIEVED! Periapsis: %.2lf m | Apoapsis: %.2lf m | Eccentricity: %.5lf | Period: %.2lf s\n",
+						fnl->periapsis, fnl->apoapsis, fnl->eccentricity, fnl->orbital_period);
+				}
+				else if (fnl->escaped) {
+					fnl->t_fl = time;
+					fprintf(result, "ESCAPE TRAJECTORY ACHIEVED!\n");
+					break;
+				}
 			}
-			if (fnl->escaped) {
-				fnl->t_fl = time;
-				fprintf(result, "ESCAPE TRAJECTORY ACHIEVED!\n");
+			else if (time >= orbit_coast_end) {
 				break;
 			}
 		}
@@ -786,4 +799,140 @@ int calculations(struct base sim, const vector<stage>& stg, const vector<vector<
 	delete[] rem_fuel;
 	delete[] decoupled;
 	return 0;
+}
+
+void generate_trajectory_svg(const char* telemetry_file, const char* svg_file) {
+	FILE* fp = NULL;
+	if (fopen_s(&fp, telemetry_file, "r") != 0 || fp == NULL) {
+		perror("Failed to open telemetry file for SVG generation");
+		return;
+	}
+
+	char line[512];
+	double t, v, alt, mass, rho, x, y, arc;
+
+	// Pass 1: Find bounding box of the flight path & count data points
+	double min_x = 0.0, max_x = 0.0;
+	double min_y = R_E, max_y = R_E;
+	int first = 1;
+	int total_pts = 0;
+
+	while (fgets(line, sizeof(line), fp)) {
+		if (sscanf_s(line, "%lf %lf %lf %lf %lf %lf %lf %lf",
+			&t, &v, &alt, &mass, &rho, &x, &y, &arc) == 8) {
+			total_pts++;
+			if (first) {
+				min_x = max_x = x;
+				min_y = max_y = y;
+				first = 0;
+			}
+			else {
+				if (x < min_x) min_x = x;
+				if (x > max_x) max_x = x;
+				if (y < min_y) min_y = y;
+				if (y > max_y) max_y = y;
+			}
+		}
+	}
+
+	// Add 12% margin and compute uniform scale (keeps Earth circular)
+	double span_x = (max_x - min_x > 1000.0) ? (max_x - min_x) : 100000.0;
+	double span_y = (max_y - min_y > 1000.0) ? (max_y - min_y) : 100000.0;
+	double pad_m = 0.12 * ((span_x > span_y) ? span_x : span_y);
+	min_x -= pad_m; max_x += pad_m;
+	min_y -= pad_m; max_y += pad_m;
+
+	const double W = 900.0, H = 700.0, MARGIN = 40.0;
+	double scale_x = (W - 2.0 * MARGIN) / (max_x - min_x);
+	double scale_y = (H - 2.0 * MARGIN) / (max_y - min_y);
+	double scale = (scale_x < scale_y) ? scale_x : scale_y;
+
+	// Center the plot inside the SVG canvas
+	double offset_x = MARGIN + ((W - 2.0 * MARGIN) - (max_x - min_x) * scale) * 0.5;
+	double offset_y = MARGIN + ((H - 2.0 * MARGIN) - (max_y - min_y) * scale) * 0.5;
+
+	// Helper macros to convert physics meters -> SVG pixels (flipping Y)
+#define TO_SX(px) (offset_x + ((px) - min_x) * scale)
+#define TO_SY(py) (offset_y + (max_y - (py)) * scale)
+
+	FILE* svg = NULL;
+	if (fopen_s(&svg, svg_file, "w") != 0 || svg == NULL) {
+		fclose(fp);
+		return;
+	}
+
+	// SVG Header & Dark Space Background
+	fprintf(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 %.0f %.0f\" "
+		"style=\"background:#0d1117; font-family:monospace;\">\n", W, H);
+
+	// Draw Earth (center at 0,0) and Atmosphere Limit (85 km)
+	double earth_cx = TO_SX(0.0), earth_cy = TO_SY(0.0);
+	fprintf(svg, "  <circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" "
+		"fill=\"#1f6feb\" fill-opacity=\"0.22\" stroke=\"#58a6ff\" stroke-width=\"2\"/>\n",
+		earth_cx, earth_cy, R_E * scale);
+	fprintf(svg, "  <circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" "
+		"fill=\"none\" stroke=\"#8b949e\" stroke-width=\"1\" stroke-dasharray=\"6,6\"/>\n",
+		earth_cx, earth_cy, (R_E + ATMO_LIMIT) * scale);
+
+	// Pass 2a: Draw continuous trajectory path
+	rewind(fp);
+	fprintf(svg, "  <polyline fill=\"none\" stroke=\"#3fb950\" stroke-width=\"1.5\" points=\"");
+	while (fgets(line, sizeof(line), fp)) {
+		if (sscanf_s(line, "%lf %lf %lf %lf %lf %lf %lf %lf",
+			&t, &v, &alt, &mass, &rho, &x, &y, &arc) == 8) {
+			fprintf(svg, "%.2f,%.2f ", TO_SX(x), TO_SY(y));
+		}
+	}
+	fprintf(svg, "\"/>\n");
+
+	// Pass 2b: Draw evenly spaced telemetry dots and red 'X' markers at stage separations
+	rewind(fp);
+	double last_sx = TO_SX(0.0), last_sy = TO_SY(R_E);
+	int stage_num = 0;
+	int pt_idx = 0;
+	int dot_step = (total_pts > 350) ? (total_pts / 300) : 1;
+
+	while (fgets(line, sizeof(line), fp)) {
+		if (sscanf_s(line, "%lf %lf %lf %lf %lf %lf %lf %lf",
+			&t, &v, &alt, &mass, &rho, &x, &y, &arc) == 8) {
+			last_sx = TO_SX(x);
+			last_sy = TO_SY(y);
+			if (pt_idx % dot_step == 0) {
+				fprintf(svg, "  <circle cx=\"%.2f\" cy=\"%.2f\" r=\"1.6\" fill=\"#7ee787\"/>\n",
+					last_sx, last_sy);
+			}
+			pt_idx++;
+		}
+		else if (sscanf_s(line, "Stage %d Completed", &stage_num) == 1 && stage_num < sim.stage_count) {
+			// Draw red 'X' marker (size 6px) + label at the separation coordinate
+			fprintf(svg, "  <g stroke=\"#ff7b72\" stroke-width=\"2.2\">\n"
+				"    <line x1=\"%.2f\" y1=\"%.2f\" x2=\"%.2f\" y2=\"%.2f\"/>\n"
+				"    <line x1=\"%.2f\" y1=\"%.2f\" x2=\"%.2f\" y2=\"%.2f\"/>\n"
+				"  </g>\n",
+				last_sx - 6.0, last_sy - 6.0, last_sx + 6.0, last_sy + 6.0,
+				last_sx - 6.0, last_sy + 6.0, last_sx + 6.0, last_sy - 6.0);
+			fprintf(svg, "  <text x=\"%.2f\" y=\"%.2f\" fill=\"#ff7b72\" font-size=\"12\">"
+				"Stage %d Sep</text>\n",
+				last_sx + 10.0, last_sy + 4.0, stage_num);
+		}
+	}
+
+	// Legend box
+	fprintf(svg, "  <rect x=\"18\" y=\"18\" width=\"245\" height=\"95\" rx=\"6\" "
+		"fill=\"#161b22\" stroke=\"#30363d\"/>\n"
+		"  <circle cx=\"34\" cy=\"38\" r=\"3\" fill=\"#7ee787\"/>\n"
+		"  <text x=\"46\" y=\"42\" fill=\"#c9d1d9\" font-size=\"12\">Telemetry Point</text>\n"
+		"  <text x=\"30\" y=\"62\" fill=\"#ff7b72\" font-size=\"13\" font-weight=\"bold\">X</text>\n"
+		"  <text x=\"46\" y=\"62\" fill=\"#c9d1d9\" font-size=\"12\">Stage Separation</text>\n"
+		"  <line x1=\"26\" y1=\"80\" x2=\"42\" y2=\"80\" stroke=\"#8b949e\" stroke-dasharray=\"4,3\"/>\n"
+		"  <text x=\"46\" y=\"84\" fill=\"#c9d1d9\" font-size=\"12\">85 km Atmosphere Limit</text>\n"
+		"  <circle cx=\"34\" cy=\"100\" r=\"5\" fill=\"#1f6feb\" fill-opacity=\"0.4\" stroke=\"#58a6ff\"/>\n"
+		"  <text x=\"46\" y=\"104\" fill=\"#c9d1d9\" font-size=\"12\">Earth Surface</text>\n");
+
+	fprintf(svg, "</svg>\n");
+
+#undef TO_SX
+#undef TO_SY
+	fclose(svg);
+	fclose(fp);
 }
