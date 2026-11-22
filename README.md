@@ -32,8 +32,7 @@
 
 ### Build & Run
 ```bash
-git clone [https://github.com/](https://github.com/)<your-username>/<your-repo-name>.git
-cd <your-repo-name>
+git clone [https://github.com/Hiz111/2D-Orbital-Launch-Simulator.git]
 g++ -O2 -std=c++17 main.cpp -o rocket_sim -lm
 ./rocket_sim
 ```
